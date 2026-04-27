@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-bucket
+  namespace: mlops
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:latest
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-secrets
+                  key: MINIO_ROOT_PASSWORD
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Esperar a que MinIO esté disponible
+              until mc alias set myminio http://minio-svc:9000 \
+                $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do
+                echo "Esperando MinIO..."
+                sleep 5
+              done
+              # Crear bucket si no existe
+              mc mb myminio/mlflow-artifacts --ignore-existing
+              echo "Bucket mlflow-artifacts listo"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
