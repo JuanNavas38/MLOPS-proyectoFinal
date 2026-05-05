@@ -2,6 +2,7 @@ import os
 import time
 import uuid
 import logging
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -132,7 +133,7 @@ def log_inference(req_id, input_data, prediction, prob0, prob1, response_ms):
             ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'success')
         """, (
             req_id,
-            str(input_data),
+            json.dumps(input_data),
             prediction,
             "readmitted_early" if prediction == 1 else "not_readmitted_early",
             prob0, prob1,

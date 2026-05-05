@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: diabetes-api
-          image: masterofelectronic/diabetes-api:1.0.0
+          image: masterofelectronic/diabetes-api:1.0.1
           ports:
             - containerPort: 8000
           env:
