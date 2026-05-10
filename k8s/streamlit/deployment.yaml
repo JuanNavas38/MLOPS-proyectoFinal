@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: diabetes-ui
+  namespace: mlops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: diabetes-ui
+  template:
+    metadata:
+      labels:
+        app: diabetes-ui
+    spec:
+      containers:
+        - name: diabetes-ui
+          image: masterofelectronic/diabetes-ui:1.0.0
+          ports:
+            - containerPort: 8501
+          env:
+            - name: API_URL
+              value: "http://diabetes-api-svc:8000"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
