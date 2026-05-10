@@ -1,0 +1,131 @@
+-- Crear base de datos mlflow_backend
+SELECT 'CREATE DATABASE mlflow_backend'
+WHERE NOT EXISTS (
+  SELECT FROM pg_database WHERE datname = 'mlflow_backend'
+)\gexec
+
+SELECT 'CREATE DATABASE airflow_metadata'
+WHERE NOT EXISTS (
+  SELECT FROM pg_database WHERE datname = 'airflow_metadata'
+)\gexec
+
+\c mlops
+
+-- RAW DATA
+CREATE TABLE IF NOT EXISTS raw_diabetes (
+  id               SERIAL PRIMARY KEY,
+  batch_id         VARCHAR(64)  NOT NULL,
+  load_timestamp   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  source_file      VARCHAR(255) NOT NULL,
+  row_hash         VARCHAR(64)  NOT NULL,
+  status           VARCHAR(20)  NOT NULL DEFAULT 'loaded',
+  encounter_id              BIGINT,
+  patient_nbr               BIGINT,
+  race                      VARCHAR(50),
+  gender                    VARCHAR(20),
+  age                       VARCHAR(20),
+  weight                    VARCHAR(20),
+  admission_type_id         INTEGER,
+  discharge_disposition_id  INTEGER,
+  admission_source_id       INTEGER,
+  time_in_hospital          INTEGER,
+  payer_code                VARCHAR(20),
+  medical_specialty         VARCHAR(100),
+  num_lab_procedures        INTEGER,
+  num_procedures            INTEGER,
+  num_medications           INTEGER,
+  number_outpatient         INTEGER,
+  number_emergency          INTEGER,
+  number_inpatient          INTEGER,
+  diag_1                    VARCHAR(20),
+  diag_2                    VARCHAR(20),
+  diag_3                    VARCHAR(20),
+  number_diagnoses          INTEGER,
+  max_glu_serum             VARCHAR(20),
+  a1cresult                 VARCHAR(20),
+  metformin                 VARCHAR(20),
+  repaglinide               VARCHAR(20),
+  nateglinide               VARCHAR(20),
+  chlorpropamide            VARCHAR(20),
+  glimepiride               VARCHAR(20),
+  acetohexamide             VARCHAR(20),
+  glipizide                 VARCHAR(20),
+  glyburide                 VARCHAR(20),
+  tolbutamide               VARCHAR(20),
+  pioglitazone              VARCHAR(20),
+  rosiglitazone             VARCHAR(20),
+  acarbose                  VARCHAR(20),
+  miglitol                  VARCHAR(20),
+  troglitazone              VARCHAR(20),
+  tolazamide                VARCHAR(20),
+  examide                   VARCHAR(20),
+  citoglipton               VARCHAR(20),
+  insulin                   VARCHAR(20),
+  glyburide_metformin       VARCHAR(20),
+  glipizide_metformin       VARCHAR(20),
+  glimepiride_pioglitazone  VARCHAR(20),
+  metformin_rosiglitazone   VARCHAR(20),
+  metformin_pioglitazone    VARCHAR(20),
+  change                    VARCHAR(10),
+  diabetesmed               VARCHAR(10),
+  readmitted                VARCHAR(10),
+  UNIQUE (row_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_batch  ON raw_diabetes(batch_id);
+CREATE INDEX IF NOT EXISTS idx_raw_status ON raw_diabetes(status);
+CREATE INDEX IF NOT EXISTS idx_raw_ts     ON raw_diabetes(load_timestamp);
+
+-- CLEAN DATA
+CREATE TABLE IF NOT EXISTS clean_diabetes (
+  id                       SERIAL PRIMARY KEY,
+  raw_id                   INTEGER REFERENCES raw_diabetes(id),
+  batch_id                 VARCHAR(64) NOT NULL,
+  processed_timestamp      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  time_in_hospital         INTEGER,
+  num_lab_procedures       INTEGER,
+  num_procedures           INTEGER,
+  num_medications          INTEGER,
+  number_outpatient        INTEGER,
+  number_emergency         INTEGER,
+  number_inpatient         INTEGER,
+  number_diagnoses         INTEGER,
+  age_encoded              INTEGER,
+  admission_type_encoded   INTEGER,
+  discharge_encoded        INTEGER,
+  admission_source_encoded INTEGER,
+  insulin_encoded          INTEGER,
+  change_encoded           INTEGER,
+  diabetesmed_encoded      INTEGER,
+  a1cresult_encoded        INTEGER,
+  max_glu_serum_encoded    INTEGER,
+  num_medications_log      FLOAT,
+  service_utilization      INTEGER,
+  readmitted_binary        INTEGER NOT NULL,
+  dataset_split            VARCHAR(10) DEFAULT 'train'
+);
+
+CREATE INDEX IF NOT EXISTS idx_clean_batch ON clean_diabetes(batch_id);
+CREATE INDEX IF NOT EXISTS idx_clean_split ON clean_diabetes(dataset_split);
+
+-- INFERENCE LOGS
+CREATE TABLE IF NOT EXISTS inference_logs (
+  id                  SERIAL PRIMARY KEY,
+  request_id          UUID NOT NULL DEFAULT gen_random_uuid(),
+  inference_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  input_data          JSONB NOT NULL,
+  prediction          INTEGER NOT NULL,
+  prediction_label    VARCHAR(20),
+  probability_class0  FLOAT,
+  probability_class1  FLOAT,
+  model_name          VARCHAR(100),
+  model_version       VARCHAR(50),
+  model_alias         VARCHAR(50),
+  response_time_ms    FLOAT,
+  status              VARCHAR(20) DEFAULT 'success',
+  error_message       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_infer_ts      ON inference_logs(inference_timestamp);
+CREATE INDEX IF NOT EXISTS idx_infer_model   ON inference_logs(model_name, model_version);
+CREATE INDEX IF NOT EXISTS idx_infer_request ON inference_logs(request_id);
