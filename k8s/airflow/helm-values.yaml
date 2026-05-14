@@ -1,14 +1,25 @@
 # ── Executor ──────────────────────────────────────────────────────────────────
 executor: LocalExecutor
 
-# ── Imagen personalizada con dependencias ML ──────────────────────────────────
+# ── Imagen oficial de Airflow 3.2.0 ──────────────────────────────────────────
+# Sin personalización — usamos la oficial directamente
 images:
   airflow:
     repository: masterofelectronic/airflow-mlops
-    tag: "3.2.0"
+    tag: "2.9.1"
     pullPolicy: IfNotPresent
 
-# ── Base de datos externa (PostgreSQL en namespace mlops) ─────────────────────
+# ── Paquetes adicionales ──────────────────────────────────────────────────────
+extraPipPackages:
+  - "apache-airflow-providers-postgres"
+  - "psycopg2-binary"
+  - "mlflow"
+  - "scikit-learn"
+  - "xgboost"
+  - "pandas"
+  - "numpy"
+
+# ── Base de datos externa ─────────────────────────────────────────────────────
 data:
   metadataConnection:
     user: mlops
@@ -18,7 +29,7 @@ data:
     db: airflow_metadata
     protocol: postgresql
 
-# ── Deshabilitar PostgreSQL y Redis incluidos en el chart ─────────────────────
+# ── Deshabilitar componentes incluidos en el chart ────────────────────────────
 postgresql:
   enabled: false
 
@@ -47,7 +58,7 @@ scheduler:
       cpu: 1500m
       memory: 3Gi
 
-# ── DAGs — PVC local ──────────────────────────────────────────────────────────
+# ── DAGs ──────────────────────────────────────────────────────────────────────
 dags:
   persistence:
     enabled: true
@@ -55,12 +66,12 @@ dags:
     size: 2Gi
     accessMode: ReadWriteOnce
 
-# ── Logs — sin persistencia ───────────────────────────────────────────────────
+# ── Logs ──────────────────────────────────────────────────────────────────────
 logs:
   persistence:
     enabled: false
 
-# ── Variables de entorno globales ─────────────────────────────────────────────
+# ── Variables de entorno ──────────────────────────────────────────────────────
 env:
   - name: MLFLOW_TRACKING_URI
     value: "http://mlflow-svc.mlops.svc.cluster.local:5000"
