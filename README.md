@@ -367,4 +367,4 @@ mlops-proyecto2/
 
 ## Video de sustentación
 
-[YouTube — MLOps Proyecto 2](https://youtu.be/PENDING)
+[YouTube — MLOps Proyecto 2](https://youtu.be/0QanNEfL1qQ)
