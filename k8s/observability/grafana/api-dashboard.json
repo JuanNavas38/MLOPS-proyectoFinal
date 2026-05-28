@@ -7,7 +7,7 @@
         "canStar": true,
         "canDelete": true,
         "slug": "mlops-api-dashboard",
-        "url": "/d/mlops-diabetes/mlops-api-dashboard",
+        "url": "/d/mlops-realty/mlops-api-dashboard",
         "expires": "0001-01-01T00:00:00Z",
         "created": "2026-05-10T03:27:45Z",
         "updated": "2026-05-10T04:27:26Z",
@@ -510,7 +510,7 @@
         "timepicker": {},
         "timezone": "browser",
         "title": "MLOps API Dashboard",
-        "uid": "mlops-diabetes",
+        "uid": "mlops-realty",
         "version": 2,
         "weekStart": ""
     }

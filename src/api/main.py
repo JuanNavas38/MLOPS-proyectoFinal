@@ -1,149 +1,157 @@
+"""
+API de inferencia — MLOps Proyecto Final (Nivel 4)
+Regresión de precios de propiedades. MLflow es la única fuente de verdad del
+modelo productivo (RF7): no se queman rutas ni versiones; se carga por alias.
+"""
+
 import os
 import time
 import uuid
-import logging
 import json
+import logging
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Optional
 
 import mlflow
-import mlflow.sklearn
-import numpy as np
+import mlflow.pyfunc
+import pandas as pd
 import psycopg2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 
-# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MLFLOW_URI   = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-svc:5000")
-MODEL_NAME   = os.getenv("MODEL_NAME", "diabetes-champion")
-MODEL_ALIAS  = os.getenv("MODEL_ALIAS", "champion")
-DB_URL       = os.getenv("DATABASE_URL", "postgresql://mlops:mlops2026@postgres-svc:5432/mlops")
+MLFLOW_URI    = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-svc:5000")
+MODEL_NAME    = os.getenv("MODEL_NAME", "realty-champion")
+MODEL_ALIAS   = os.getenv("MODEL_ALIAS", "champion")
+DB_URL        = os.getenv("DATABASE_URL", "postgresql://mlops:mlops2026@postgres-svc:5432/mlops")
+RELOAD_TOKEN  = os.getenv("RELOAD_TOKEN", "")  # protege el endpoint admin /reload
 
-# ── Prometheus metrics ────────────────────────────────────────────────────────
-REQUEST_COUNT = Counter(
-    "api_requests_total",
-    "Total de solicitudes",
-    ["method", "endpoint", "status"]
-)
-REQUEST_LATENCY = Histogram(
-    "api_request_duration_seconds",
-    "Latencia de solicitudes",
-    ["endpoint"],
-    buckets=[.01, .025, .05, .1, .25, .5, 1.0, 2.5]
-)
-PREDICTION_COUNT = Counter(
-    "api_predictions_total",
-    "Total de predicciones",
-    ["prediction_label"]
-)
+# ── Métricas Prometheus (RF10) ──────────────────────────────────────────────────
+REQUEST_COUNT = Counter("api_requests_total", "Total de solicitudes",
+                        ["method", "endpoint", "status"])
+REQUEST_LATENCY = Histogram("api_request_duration_seconds", "Latencia de solicitudes",
+                            ["endpoint"], buckets=[.01, .025, .05, .1, .25, .5, 1.0, 2.5])
+PREDICTION_COUNT = Counter("api_predictions_total", "Total de predicciones")
+MODEL_VERSION_G  = Gauge("api_model_version", "Versión del modelo cargado")
 
-# ── Model cache ───────────────────────────────────────────────────────────────
+
+# ── Model cache con recarga segura (RF7) ────────────────────────────────────────
 class ModelCache:
+    """Mantiene el modelo productivo cargado desde MLflow.
+    La recarga es atómica: si falla la descarga, conserva el modelo previo (fallback).
+    Un lock evita que una petición use un modelo a medio reemplazar (concurrencia).
+    """
     def __init__(self):
-        self.model        = None
-        self.version      = None
-        self.model_name   = None
-        self.loaded_at    = None
+        self._lock      = threading.RLock()
+        self.model      = None
+        self.version    = None
+        self.model_name = MODEL_NAME
+        self.loaded_at  = None
 
-    def load(self):
+    def load(self) -> dict:
         mlflow.set_tracking_uri(MLFLOW_URI)
         model_uri = f"models:/{MODEL_NAME}@{MODEL_ALIAS}"
         logger.info(f"Cargando modelo desde {model_uri}")
-        self.model      = mlflow.sklearn.load_model(model_uri)
-        client          = mlflow.tracking.MlflowClient(tracking_uri=MLFLOW_URI)
-        version_info    = client.get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS)
-        self.version    = version_info.version
-        self.model_name = MODEL_NAME
-        self.loaded_at  = datetime.utcnow()
-        logger.info(f"Modelo cargado: {MODEL_NAME} v{self.version}")
+        # Descargar FUERA del lock para no bloquear inferencias durante la descarga
+        new_model = mlflow.pyfunc.load_model(model_uri)
+        client    = mlflow.tracking.MlflowClient(tracking_uri=MLFLOW_URI)
+        version   = client.get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS).version
+        # Intercambio atómico
+        with self._lock:
+            self.model     = new_model
+            self.version   = version
+            self.loaded_at = datetime.utcnow()
+        try:
+            MODEL_VERSION_G.set(float(version))
+        except (TypeError, ValueError):
+            pass
+        logger.info(f"Modelo cargado: {MODEL_NAME} v{version}")
+        return {"model_name": MODEL_NAME, "version": version}
+
+    def predict(self, df: pd.DataFrame) -> float:
+        with self._lock:
+            if self.model is None:
+                raise RuntimeError("Modelo no disponible")
+            return float(self.model.predict(df)[0])
+
 
 cache = ModelCache()
 
-# ── Lifespan ──────────────────────────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    cache.load()
+    try:
+        cache.load()
+    except Exception as e:  # arranca aunque MLflow aún no tenga un champion
+        logger.warning(f"No se pudo cargar el modelo al iniciar: {e}")
     yield
 
-# ── App ───────────────────────────────────────────────────────────────────────
+
 app = FastAPI(
-    title="Diabetes Readmission API",
-    description="API de inferencia MLOps — Pontificia Universidad Javeriana",
+    title="Realty Price API",
+    description="API de inferencia MLOps — Proyecto Final Nivel 4 (PUJ)",
     version="1.0.0",
     lifespan=lifespan,
 )
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
-class PredictRequest(BaseModel):
-    time_in_hospital:         int   = Field(..., ge=1, le=14)
-    num_lab_procedures:       int   = Field(..., ge=0)
-    num_procedures:           int   = Field(..., ge=0)
-    num_medications:          int   = Field(..., ge=0)
-    number_outpatient:        int   = Field(0,   ge=0)
-    number_emergency:         int   = Field(0,   ge=0)
-    number_inpatient:         int   = Field(0,   ge=0)
-    number_diagnoses:         int   = Field(..., ge=0)
-    age_encoded:              int   = Field(..., ge=0, le=9)
-    admission_type_encoded:   int   = Field(1,   ge=0)
-    discharge_encoded:        int   = Field(1,   ge=0)
-    admission_source_encoded: int   = Field(1,   ge=0)
-    insulin_encoded:          int   = Field(0,   ge=0)
-    change_encoded:           int   = Field(0,   ge=0)
-    diabetesmed_encoded:      int   = Field(1,   ge=0)
-    a1cresult_encoded:        int   = Field(0,   ge=0)
-    max_glu_serum_encoded:    int   = Field(0,   ge=0)
-    num_medications_log:      float = Field(0.0, ge=0)
-    service_utilization:      int   = Field(0,   ge=0)
+# ── Schemas ─────────────────────────────────────────────────────────────────────
+class PropertyFeatures(BaseModel):
+    """Features crudas de una propiedad. El modelo productivo (pipeline MLflow)
+    incorpora su propio preprocesamiento, por eso recibe valores naturales."""
+    brokered_by:    Optional[str]   = Field(None, description="Agencia/corredor codificado")
+    status:         str             = Field("for_sale", description="for_sale / ready_to_build")
+    bed:            int             = Field(..., ge=0)
+    bath:           int             = Field(..., ge=0)
+    acre_lot:       float           = Field(..., ge=0)
+    street:         Optional[str]   = Field(None)
+    city:           str             = Field(...)
+    state:          str             = Field(...)
+    zip_code:       str             = Field(...)
+    house_size:     float           = Field(..., ge=0)
+    prev_sold_date: Optional[str]   = Field(None, description="YYYY-MM-DD si existe")
+
 
 class PredictResponse(BaseModel):
-    request_id:        str
-    prediction:        int
-    prediction_label:  str
-    probability_class0: float
-    probability_class1: float
-    model_name:        str
-    model_version:     str
-    model_alias:       str
-    response_time_ms:  float
+    request_id:       str
+    predicted_price:  float
+    model_name:       str
+    model_version:    str
+    model_alias:      str
+    response_time_ms: float
 
-# ── DB helper ─────────────────────────────────────────────────────────────────
-def log_inference(req_id, input_data, prediction, prob0, prob1, response_ms):
+
+# ── DB helper (RF8) ───────────────────────────────────────────────────────────
+def log_inference(req_id, input_data, predicted_price, response_ms, status="success", err=None):
     try:
         conn = psycopg2.connect(DB_URL)
         cur  = conn.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO inference_logs (
-                request_id, input_data, prediction, prediction_label,
-                probability_class0, probability_class1,
-                model_name, model_version, model_alias, response_time_ms, status
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'success')
-        """, (
-            req_id,
-            json.dumps(input_data),
-            prediction,
-            "readmitted_early" if prediction == 1 else "not_readmitted_early",
-            prob0, prob1,
-            cache.model_name, cache.version, MODEL_ALIAS,
-            response_ms,
-        ))
+                request_id, input_data, predicted_price,
+                model_name, model_version, model_alias, response_time_ms,
+                status, error_message
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (req_id, json.dumps(input_data), predicted_price,
+             cache.model_name, str(cache.version), MODEL_ALIAS, response_ms, status, err),
+        )
         conn.commit()
         cur.close(); conn.close()
     except Exception as e:
         logger.error(f"Error logging inference: {e}")
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
@@ -155,61 +163,66 @@ def health():
         "loaded_at": str(cache.loaded_at),
     }
 
+
 @app.get("/model-info")
 def model_info():
-    if not cache.model:
+    if cache.model is None:
         raise HTTPException(503, "Modelo no cargado")
     return {
-        "model_name":    cache.model_name,
+        "model_name": cache.model_name,
         "model_version": cache.version,
-        "model_alias":   MODEL_ALIAS,
-        "loaded_at":     str(cache.loaded_at),
-        "model_type":    type(cache.model).__name__,
+        "model_alias": MODEL_ALIAS,
+        "loaded_at": str(cache.loaded_at),
     }
 
+
+@app.post("/reload")
+def reload_model(x_reload_token: str = Header(default="")):
+    """RF7: recarga el modelo productivo desde MLflow SIN redesplegar.
+    Protegido por token. Ante error de descarga conserva el modelo previo (fallback)."""
+    if RELOAD_TOKEN and x_reload_token != RELOAD_TOKEN:
+        raise HTTPException(401, "Token inválido")
+    try:
+        info = cache.load()
+        return {"status": "reloaded", **info}
+    except Exception as e:
+        logger.error(f"Recarga fallida, se conserva el modelo previo: {e}")
+        raise HTTPException(503, f"Recarga fallida (fallback al modelo previo): {e}")
+
+
 @app.post("/predict", response_model=PredictResponse)
-def predict(req: PredictRequest):
-    if not cache.model:
+def predict(req: PropertyFeatures):
+    if cache.model is None:
+        REQUEST_COUNT.labels("POST", "/predict", "503").inc()
         raise HTTPException(503, "Modelo no disponible")
 
-    start = time.time()
+    start  = time.time()
     req_id = str(uuid.uuid4())
+    df = pd.DataFrame([req.dict()])
 
-    features = [[
-        req.time_in_hospital, req.num_lab_procedures, req.num_procedures,
-        req.num_medications, req.number_outpatient, req.number_emergency,
-        req.number_inpatient, req.number_diagnoses, req.age_encoded,
-        req.admission_type_encoded, req.discharge_encoded,
-        req.admission_source_encoded, req.insulin_encoded, req.change_encoded,
-        req.diabetesmed_encoded, req.a1cresult_encoded, req.max_glu_serum_encoded,
-        req.num_medications_log, req.service_utilization,
-    ]]
+    try:
+        predicted_price = cache.predict(df)
+    except Exception as e:
+        elapsed_ms = (time.time() - start) * 1000
+        REQUEST_COUNT.labels("POST", "/predict", "500").inc()
+        log_inference(req_id, req.dict(), None, elapsed_ms, status="error", err=str(e))
+        raise HTTPException(500, f"Error de inferencia: {e}")
 
-    prediction = int(cache.model.predict(features)[0])
-    proba      = cache.model.predict_proba(features)[0]
-    prob0, prob1 = float(proba[0]), float(proba[1])
     elapsed_ms = (time.time() - start) * 1000
-    label      = "readmitted_early" if prediction == 1 else "not_readmitted_early"
-
-    # Métricas Prometheus
     REQUEST_COUNT.labels("POST", "/predict", "200").inc()
     REQUEST_LATENCY.labels("/predict").observe(elapsed_ms / 1000)
-    PREDICTION_COUNT.labels(label).inc()
-
-    # Log en DB
-    log_inference(req_id, req.dict(), prediction, prob0, prob1, elapsed_ms)
+    PREDICTION_COUNT.inc()
+    log_inference(req_id, req.dict(), predicted_price, elapsed_ms)
 
     return PredictResponse(
         request_id=req_id,
-        prediction=prediction,
-        prediction_label=label,
-        probability_class0=prob0,
-        probability_class1=prob1,
+        predicted_price=predicted_price,
         model_name=cache.model_name,
         model_version=str(cache.version),
         model_alias=MODEL_ALIAS,
         response_time_ms=elapsed_ms,
     )
+
 
 @app.get("/metrics")
 def metrics():

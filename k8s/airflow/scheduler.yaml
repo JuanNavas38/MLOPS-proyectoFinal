@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: scheduler
-          image: masterofelectronic/airflow-mlops:2.9.1
+          image: juannavas38/realty-airflow:latest   # TODO: confirmar usuario DockerHub y usar tag por SHA
           command: ["airflow", "scheduler"]
           env:
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN

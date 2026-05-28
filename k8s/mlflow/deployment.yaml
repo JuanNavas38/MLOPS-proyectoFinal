@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: mlflow
-          image: masterofelectronic/mlflow-postgres:v2.22.0
+          image: juannavas38/realty-mlflow:latest   # TODO: confirmar usuario DockerHub y usar tag por SHA
           command:
             - mlflow
             - server

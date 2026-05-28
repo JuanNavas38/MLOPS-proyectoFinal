@@ -19,7 +19,7 @@ spec:
           args:
             - -f
             - /locust/locustfile.py
-            - --host=http://diabetes-api-svc:8000
+            - --host=http://realty-api-svc:8000
             - --web-port=8089
           ports:
             - containerPort: 8089

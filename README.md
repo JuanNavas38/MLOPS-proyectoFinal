@@ -1,370 +1,192 @@
-# MLOps Proyecto 2 — Diabetes Readmission Pipeline
+# MLOps Proyecto Final — Nivel 4: Automatización, decisión de reentrenamiento y despliegue GitOps
 
-**Pontificia Universidad Javeriana — Maestría en Computación de Alto Rendimiento**  
-**Estudiantes:** Jhonthan Murcia Galán  
+**Pontificia Universidad Javeriana — Maestría en Inteligencia Artificial**
 **Curso:** Operaciones de Machine Learning
+**Estudiantes:** _(por completar)_
+
+> Sistema MLOps que recolecta datos por lotes desde una API externa, los valida y procesa,
+> **decide automáticamente si reentrenar**, registra experimentos en MLflow, **promueve el
+> modelo solo si mejora al productivo**, y expone inferencia vía FastAPI tomando MLflow como
+> única fuente de verdad. Todo desplegado en Kubernetes y sincronizado con **Argo CD (GitOps)**.
+
+> ⚠️ **Estado: ESQUELETO.** La infraestructura (K8s, MLflow, Postgres, MinIO, observabilidad,
+> Locust) se reutiliza de una entrega previa y ya está neutralizada al dominio inmobiliario.
+> La lógica nueva del Nivel 4 (cliente API, bifurcaciones del DAG, comparación/promoción,
+> recarga RF7, CI y Argo CD) está marcada con `TODO` y se implementa por fases.
 
 ---
 
-## Descripción
+## Problema
 
-Sistema MLOps completo desplegado en Kubernetes que implementa el ciclo de vida de un modelo de Machine Learning para predecir readmisión hospitalaria temprana (<30 días) en pacientes diabéticos. El dataset utilizado corresponde a 10 años (1999-2008) de atención clínica en 130 hospitales de EE.UU. con más de 100.000 registros.
+**Regresión:** estimar el `price` de una propiedad a partir de 12 variables estructurales,
+geográficas y comerciales (bed, bath, acre_lot, house_size, city, state, zip_code, etc.).
+
+Los datos **no se entregan completos**: llegan **por lotes** desde una API externa
+(`cristiandiaz13/mlops-puj:data-api-pf-v1`). Cada ejecución del DAG consume un lote y decide,
+con reglas técnicas, si amerita reentrenar.
+
+**Métrica prioritaria:** MAE (con RMSE, MAPE y R² de apoyo).
+**Regla de promoción:** promover el candidato solo si **MAE baja ≥ 3 %** y **RMSE no empeora > 1 %**.
 
 ---
 
 ## Arquitectura
 
 ```
-Archivo CSV → Airflow DAG → PostgreSQL (raw/clean) → MLflow → API FastAPI → Streamlit
-                                                          ↓
-                                                       MinIO
-                                                          ↓
-                                              Prometheus → Grafana
-                                                          ↑
-                                                        Locust
+Usuario → GitHub → GitHub Actions → DockerHub
+                                        │
+                                   Argo CD (GitOps)
+                                        │
+                                   Kubernetes
+   ┌────────────────────────────────────────────────────────────┐
+   │  API de datos (lotes) → Airflow DAG → PostgreSQL (RAW/CLEAN) │
+   │                              │                               │
+   │                           MLflow ── Postgres + MinIO         │
+   │                              │                               │
+   │   FastAPI (carga modelo desde MLflow, recarga sin redeploy)  │
+   │        │                 │                                   │
+   │   Streamlit          Prometheus → Grafana   ← Locust         │
+   └────────────────────────────────────────────────────────────┘
 ```
 
 ### Componentes
 
-| Componente | Tecnología | Namespace |
+| Componente | Tecnología | Estado |
 |---|---|---|
-| Orquestación | Apache Airflow 3.2.0 (Helm) | airflow |
-| Base de datos | PostgreSQL 15 | mlops |
-| Object storage | MinIO | mlops |
-| ML Tracking | MLflow 2.22.0 | mlops |
-| API de inferencia | FastAPI + Uvicorn | mlops |
-| Interfaz gráfica | Streamlit | mlops |
-| Pruebas de carga | Locust 2.24.0 | mlops |
-| Métricas | Prometheus + Grafana | mlops |
+| Orquestación | Apache Airflow (Helm) | reusa base · DAG nuevo |
+| RAW / CLEAN DATA | PostgreSQL 15 (`raw_properties` / `clean_properties`) | esquema nuevo |
+| Object storage (artefactos) | MinIO | reusa base |
+| ML Tracking / Registry | MLflow 2.22.0 (backend Postgres) | reusa base |
+| API de inferencia | FastAPI + Uvicorn | reescrita (regresión + `/reload`) |
+| Interfaz | Streamlit (inferencia + historial) | reescrita |
+| Observabilidad | Prometheus + Grafana | reusa base |
+| Pruebas de carga | Locust 2.24.0 | reescrita |
+| CI | GitHub Actions → DockerHub | **nuevo** (`.github/workflows/`) |
+| GitOps | Argo CD | **nuevo** (`argocd/`) |
 
 ---
 
-## Requisitos previos
+## Flujo del DAG (`dags/realty_pipeline.py`)
 
-- Rocky Linux 9.x
-- k3s v1.34+ instalado
-- Helm v4+
-- Docker 29+
-- kubectl configurado
+19 tareas con **dos bifurcaciones explícitas**:
+
+```
+start → fetch_batch_from_api → store_raw_batch → validate_schema →
+validate_data_quality → detect_new_categories → detect_data_drift →
+preprocess_data → decide_training ──┬─→ skip_training ─────────────────────┐
+                                    └─→ train_candidate_model →            │
+                                        evaluate_candidate_model →         │
+                                        register_candidate_in_mlflow →     │
+                                        compare_with_production →          │
+                                        decide_promotion ─┬→ promote_model →┤
+                                                          └→ reject_model ─→┤
+                                                          notify_or_log_result → end
+```
+
+- **`decide_training`** (RF4): entrena solo si hay drift / nuevas categorías frecuentes /
+  crecimiento de volumen / degradación — no por periodicidad.
+- **`decide_promotion`** (RF6): promueve solo bajo la regla de MAE/RMSE.
+- Cada lote queda registrado en la tabla `training_audit`, fuente del historial en Streamlit.
 
 ---
 
-## Despliegue
+## Datos (RF2)
 
-### 1. Clonar el repositorio
-
-```bash
-git clone https://github.com/masterofelectronic/mlops-proyecto2.git
-cd mlops-proyecto2
-```
-
-### 2. Crear namespaces
-
-```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl create namespace airflow
-```
-
-### 3. Aplicar secrets
-
-```bash
-kubectl apply -f k8s/secrets.yaml
-```
-
-### 4. Desplegar PostgreSQL
-
-```bash
-kubectl apply -f k8s/postgres/configmap.yaml
-kubectl apply -f k8s/postgres/pvc.yaml
-kubectl apply -f k8s/postgres/statefulset.yaml
-kubectl apply -f k8s/postgres/service.yaml
-kubectl rollout status statefulset/postgres -n mlops --timeout=120s
-```
-
-### 5. Desplegar MinIO
-
-```bash
-kubectl apply -f k8s/minio/pvc.yaml
-kubectl apply -f k8s/minio/deployment.yaml
-kubectl apply -f k8s/minio/service.yaml
-kubectl rollout status deployment/minio -n mlops --timeout=120s
-kubectl apply -f k8s/minio/job-create-bucket.yaml
-```
-
-### 6. Desplegar MLflow
-
-```bash
-kubectl apply -f k8s/mlflow/deployment.yaml
-kubectl apply -f k8s/mlflow/service.yaml
-kubectl rollout status deployment/mlflow -n mlops --timeout=180s
-```
-
-### 7. Desplegar Airflow con Helm
-
-```bash
-helm repo add apache-airflow https://airflow.apache.org
-helm repo update
-
-helm install airflow apache-airflow/airflow \
-  --namespace airflow \
-  --values k8s/airflow/helm-values.yaml \
-  --timeout 15m
-
-# Exponer UI via NodePort
-kubectl patch svc airflow-api-server -n airflow \
-  -p '{"spec": {"type": "NodePort", "ports": [{"port": 8080, "targetPort": 8080, "nodePort": 30088}]}}'
-
-# Crear usuario admin
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- \
-  airflow users create \
-  --username admin \
-  --password admin2026 \
-  --firstname Admin \
-  --lastname MLOps \
-  --role Admin \
-  --email admin@mlops.com
-```
-
-### 8. Copiar DAG y dataset al pod de Airflow
-
-```bash
-SCHEDULER=$(kubectl get pod -n airflow -l component=scheduler -o jsonpath='{.items[0].metadata.name}')
-
-# Dataset
-kubectl cp data/Diabetes.csv -n airflow $SCHEDULER:/opt/airflow/dags/Diabetes.csv -c scheduler
-
-# DAG
-kubectl cp dags/diabetes_pipeline.py -n airflow $SCHEDULER:/opt/airflow/dags/diabetes_pipeline.py -c scheduler
-```
-
-### 9. Crear Airflow Connection para PostgreSQL
-
-```bash
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- \
-  airflow connections add mlops_postgres \
-  --conn-type postgres \
-  --conn-host postgres-svc.mlops.svc.cluster.local \
-  --conn-port 5432 \
-  --conn-login mlops \
-  --conn-password mlops2026 \
-  --conn-schema mlops
-```
-
-### 10. Desplegar API de inferencia
-
-```bash
-kubectl apply -f k8s/api/deployment.yaml
-kubectl apply -f k8s/api/service.yaml
-kubectl rollout status deployment/diabetes-api -n mlops --timeout=120s
-```
-
-### 11. Desplegar Streamlit
-
-```bash
-kubectl apply -f k8s/streamlit/deployment.yaml
-kubectl apply -f k8s/streamlit/service.yaml
-kubectl rollout status deployment/diabetes-ui -n mlops --timeout=120s
-```
-
-### 12. Desplegar observabilidad
-
-```bash
-kubectl apply -f k8s/observability/prometheus/rbac.yaml
-kubectl apply -f k8s/observability/prometheus/configmap.yaml
-kubectl apply -f k8s/observability/prometheus/deployment.yaml
-kubectl apply -f k8s/observability/grafana/deployment.yaml
-
-kubectl rollout status deployment/prometheus -n mlops --timeout=120s
-kubectl rollout status deployment/grafana -n mlops --timeout=120s
-```
-
-### 13. Desplegar Locust
-
-```bash
-kubectl create configmap locust-config \
-  --from-file=locustfile.py=locust/locustfile.py -n mlops
-
-kubectl apply -f k8s/locust/deployment.yaml
-kubectl rollout status deployment/locust -n mlops --timeout=120s
-```
-
----
-
-## Acceso a los servicios
-
-> Accesibles desde la red universitaria en `http://10.43.101.82:<puerto>`  
-> Fuera de la red: configurar SSH tunnel via VPN universitaria
-
-| Servicio | NodePort | URL local |
-|---|---|---|
-| Airflow UI | 30088 | http://localhost:30088 |
-| MLflow UI | 30500 | http://localhost:30500 |
-| MinIO Console | 30900 | http://localhost:30900 |
-| FastAPI | 30800 | http://localhost:30800 |
-| Streamlit | 30801 | http://localhost:30801 |
-| Prometheus | 30909 | http://localhost:30909 |
-| Grafana | 30300 | http://localhost:30300 |
-| Locust | 30089 | http://localhost:30089 |
-
----
-
-## Credenciales
-
-| Servicio | Usuario | Contraseña |
-|---|---|---|
-| Airflow | admin | admin2026 |
-| MLflow | — | sin autenticación |
-| MinIO | minioadmin | minioadmin2026 |
-| Grafana | admin | admin2026 |
-| PostgreSQL | mlops | mlops2026 |
-
----
-
-## Pipeline de datos
-
-El DAG `diabetes_pipeline` implementa carga incremental en lotes de máximo 15.000 registros:
-
-| Tarea | Descripción |
+| Tabla | Rol |
 |---|---|
-| `validate_source` | Verifica existencia y estructura del archivo CSV |
-| `load_batch_to_raw` | Carga el siguiente lote a `raw_diabetes` con row_hash para deduplicación |
-| `validate_data_quality` | Valida calidad del lote: nulos, rangos, valores válidos |
-| `process_and_clean` | Limpieza, feature engineering y split 72/13/15 |
-| `train_and_register` | Entrena LR + RF + XGBoost, registra en MLflow, promueve champion |
-
-### Dataset — 101.766 registros — 7 lotes
-
-| Lote | Registros | Estado |
-|---|---|---|
-| 1-6 | 15.000 c/u | ✅ Cargados |
-| 7 | 6.766 | ✅ Cargado |
-
-### Métrica de selección de modelo
-
-Se usa **ROC-AUC** como métrica principal porque el dataset está desbalanceado (~11% readmisión temprana). En un contexto clínico, la capacidad discriminativa del modelo es más relevante que el accuracy global. Un falso negativo (no detectar readmisión) tiene mayor costo clínico que un falso positivo.
-
-### Resultados primer experimento (lote 1 — 15.000 registros)
-
-| Modelo | ROC-AUC | F1 |
-|---|---|---|
-| XGBoost | mejor | 0.796 |
-| Random Forest | — | 0.839 |
-| Logistic Regression | — | 0.708 |
-
-**Modelo productivo:** `diabetes-champion` (XGBoost) con alias `champion` en MLflow.
+| `raw_properties` | Lotes tal como llegan de la API + metadatos de ingestión (RF1/RF2) |
+| `clean_properties` | Datos transformados y listos para entrenar, trazables al lote crudo |
+| `training_audit` | Decisión por lote: validaciones, drift, entrenó/no, promovió/no, métricas (RF4/RF9) |
+| `inference_logs` | Registro de cada inferencia: entrada, `predicted_price`, versión de modelo (RF8) |
 
 ---
 
-## API de inferencia
+## API de inferencia (RF7/RF8)
 
-### Endpoints
+MLflow es la **única fuente de verdad**: el modelo se carga por alias `models:/realty-champion@champion`.
 
 | Endpoint | Método | Descripción |
 |---|---|---|
-| `/health` | GET | Estado de la API y modelo cargado |
-| `/predict` | POST | Predicción de readmisión |
+| `/health` | GET | Estado de la API y del modelo cargado |
+| `/predict` | POST | Estima el precio de una propiedad |
 | `/model-info` | GET | Nombre, versión y alias del modelo activo |
+| `/reload` | POST | **Recarga el modelo desde MLflow sin redesplegar** (admin, token) |
 | `/metrics` | GET | Métricas Prometheus |
 
-### Ejemplo de predicción
-
-```bash
-curl -X POST http://localhost:30800/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "time_in_hospital": 5,
-    "num_lab_procedures": 45,
-    "num_procedures": 2,
-    "num_medications": 15,
-    "number_outpatient": 0,
-    "number_emergency": 1,
-    "number_inpatient": 2,
-    "number_diagnoses": 7,
-    "age_encoded": 6,
-    "admission_type_encoded": 1,
-    "discharge_encoded": 1,
-    "admission_source_encoded": 1,
-    "insulin_encoded": 2,
-    "change_encoded": 1,
-    "diabetesmed_encoded": 1,
-    "a1cresult_encoded": 0,
-    "max_glu_serum_encoded": 0,
-    "num_medications_log": 2.77,
-    "service_utilization": 3
-  }'
-```
+La recarga es atómica con fallback al modelo previo si la descarga falla (ver `ModelCache` en `src/api/main.py`).
 
 ---
 
-## Observabilidad
+## Despliegue (GitOps con Argo CD)
 
-### Dashboards Grafana
+> Kubernetes consume imágenes **desde DockerHub** (construidas por GitHub Actions). No se construyen
+> imágenes en la máquina de despliegue ni se usa `kubectl apply` manual como mecanismo principal.
 
-| Dashboard | Descripción |
+```bash
+# Clúster local
+minikube start --cpus 4 --memory 8192 --addons ingress,metrics-server
+
+# Instalar Argo CD
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Registrar la aplicación (a partir de aquí Argo CD sincroniza Git → clúster)
+kubectl apply -n argocd -f argocd/application.yaml
+```
+
+Secrets (`k8s/secrets.yaml`) y credenciales se gestionan fuera del código (RF seguridad). Falta
+configurar en GitHub los secrets `DOCKERHUB_USERNAME` y `DOCKERHUB_TOKEN` para el workflow de CI.
+
+---
+
+## Acceso a los servicios (NodePort)
+
+| Servicio | NodePort |
 |---|---|
-| MLOps API Dashboard | RPS, latencia, percentiles p50/p95/p99, errores, predicciones |
-| MLOps Ingestion Dashboard | Registros raw/clean, lotes, distribución target, inferencias |
+| Airflow UI | 30088 |
+| MLflow UI | 30500 |
+| MinIO Console | 30900 |
+| FastAPI | 30800 |
+| Streamlit | 30801 |
+| Prometheus | 30909 |
+| Grafana | 30300 |
+| Locust | 30089 |
 
-### Pruebas de carga — Locust
-
-| Usuarios | RPS | Latencia promedio | p95 | Errores |
-|---|---|---|---|---|
-| 5 | ~4 req/s | ~25ms | ~38ms | 0% |
-| 10 | ~8 req/s | ~24ms | ~38ms | 0% |
-
-La API mantiene latencias estables al duplicar la carga. El límite operativo no fue alcanzado bajo las condiciones de recursos configuradas (1 CPU / 1Gi RAM).
+> En minikube: `minikube service <svc> -n mlops --url` o `kubectl port-forward`.
 
 ---
 
 ## Estructura del repositorio
 
 ```
-mlops-proyecto2/
-├── k8s/
-│   ├── namespace.yaml
-│   ├── secrets.yaml
-│   ├── postgres/
-│   ├── minio/
-│   ├── mlflow/
-│   ├── airflow/
-│   │   └── helm-values.yaml
-│   ├── api/
-│   ├── streamlit/
-│   ├── locust/
-│   └── observability/
-│       ├── prometheus/
-│       └── grafana/
+.
+├── .github/workflows/      # CI: build & push de imágenes a DockerHub (nuevo)
+├── argocd/                 # Application de Argo CD (nuevo)
 ├── dags/
-│   └── diabetes_pipeline.py
+│   └── realty_pipeline.py  # DAG con bifurcaciones (decisión de entrenamiento y promoción)
 ├── src/
-│   ├── api/
-│   │   ├── main.py
-│   │   └── requirements.txt
-│   └── ui/
-│       ├── app.py
-│       └── requirements.txt
-├── docker/
-│   ├── mlflow/Dockerfile
-│   ├── api/Dockerfile
-│   └── streamlit/Dockerfile
-├── locust/
-│   └── locustfile.py
-├── migrations/
+│   ├── ingestion/          # cliente robusto de la API de datos (nuevo)
+│   ├── api/                # FastAPI de inferencia (regresión + recarga RF7)
+│   └── ui/                 # Streamlit (inferencia + historial)
+├── docker/                 # Dockerfiles (api, ui, mlflow, airflow)
+├── k8s/                    # Manifiestos: postgres, minio, mlflow, airflow, api, ui, locust, observabilidad
+├── migrations/             # Esquema SQL (raw/clean/audit/inference)
+├── locust/                 # Prueba de carga
 └── README.md
 ```
 
 ---
 
-## Imágenes Docker
+## Pendientes (roadmap por fases)
 
-| Imagen | Tag | Descripción |
-|---|---|---|
-| `masterofelectronic/mlflow-postgres` | v2.22.0 | MLflow con psycopg2 + boto3 |
-| `masterofelectronic/diabetes-api` | 1.0.1 | FastAPI de inferencia |
-| `masterofelectronic/diabetes-ui` | 1.0.0 | Streamlit UI |
+1. **Fase 0** — levantar la API de datos local e inspeccionar su contrato real.
+2. **Fase 1** — implementar el DAG (cliente API, validaciones, drift, preprocesamiento, entrenamiento, comparación/promoción).
+3. **Fase 2** — completar API/UI y dejar el flujo end-to-end funcionando local.
+4. **Fase 3** — desplegar en minikube con recursos/probes.
+5. **Fase 4** — CI (GitHub Actions → DockerHub) + Argo CD + documentación + video.
 
 ---
 
 ## Video de sustentación
 
-[YouTube — MLOps Proyecto 2](https://youtu.be/0QanNEfL1qQ)
+_(pendiente — se publicará en YouTube, máx. 10 min)_

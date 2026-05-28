@@ -1,0 +1,31 @@
+# GitOps (sección 6.15): Argo CD sincroniza los manifiestos versionados con el clúster.
+# Aplicar UNA vez:  kubectl apply -n argocd -f argocd/application.yaml
+# A partir de ahí, Argo CD gestiona el despliegue (no kubectl apply manual).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: realty-mlops
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/JuanNavas38/MLOPS-proyectoFinal.git
+    targetRevision: main
+    path: k8s
+    directory:
+      recurse: true
+      # Los *-dashboard.json son dashboards de Grafana, NO manifiestos K8s: deben
+      # cargarse vía ConfigMap, no aplicarse directo. Se excluyen del sync.
+      exclude: "{observability/grafana/*-dashboard.json,mlflow-chart/**}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true

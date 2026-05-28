@@ -10,9 +10,9 @@ data:
       evaluation_interval: 15s
 
     scrape_configs:
-      - job_name: 'diabetes-api'
+      - job_name: 'realty-api'
         static_configs:
-          - targets: ['diabetes-api-svc:8000']
+          - targets: ['realty-api-svc:8000']
         metrics_path: '/metrics'
 
       - job_name: 'kubernetes-pods'

@@ -1,26 +1,31 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: diabetes-ui
+  name: realty-ui
   namespace: mlops
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: diabetes-ui
+      app: realty-ui
   template:
     metadata:
       labels:
-        app: diabetes-ui
+        app: realty-ui
     spec:
       containers:
-        - name: diabetes-ui
-          image: masterofelectronic/diabetes-ui:1.0.0
+        - name: realty-ui
+          image: juannavas38/realty-ui:latest   # TODO: confirmar usuario DockerHub y usar tag por SHA
           ports:
             - containerPort: 8501
           env:
             - name: API_URL
-              value: "http://diabetes-api-svc:8000"
+              value: "http://realty-api-svc:8000"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-secrets
+                  key: DATABASE_URL
           resources:
             requests:
               cpu: "100m"

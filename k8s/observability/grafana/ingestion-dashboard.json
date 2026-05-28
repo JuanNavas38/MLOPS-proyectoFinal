@@ -73,7 +73,7 @@
                             "uid": "ffllx8gs4w0sge"
                         },
                         "format": "table",
-                        "rawSql": "SELECT COUNT(*) as value FROM raw_diabetes",
+                        "rawSql": "SELECT COUNT(*) as value FROM raw_properties",
                         "refId": "A"
                     }
                 ],
@@ -115,7 +115,7 @@
                             "uid": "ffllx8gs4w0sge"
                         },
                         "format": "table",
-                        "rawSql": "SELECT COUNT(*) as value FROM clean_diabetes",
+                        "rawSql": "SELECT COUNT(*) as value FROM clean_properties",
                         "refId": "A"
                     }
                 ],
@@ -199,7 +199,7 @@
                             "uid": "ffllx8gs4w0sge"
                         },
                         "format": "table",
-                        "rawSql": "SELECT COUNT(DISTINCT batch_id) as value FROM raw_diabetes",
+                        "rawSql": "SELECT COUNT(DISTINCT batch_id) as value FROM raw_properties",
                         "refId": "A"
                     }
                 ],
@@ -233,7 +233,7 @@
                             "uid": "ffllx8gs4w0sge"
                         },
                         "format": "table",
-                        "rawSql": "SELECT batch_id as metric, COUNT(*) as value FROM raw_diabetes GROUP BY batch_id ORDER BY batch_id",
+                        "rawSql": "SELECT batch_id as metric, COUNT(*) as value FROM raw_properties GROUP BY batch_id ORDER BY batch_id",
                         "refId": "A"
                     }
                 ],
@@ -266,7 +266,7 @@
                             "uid": "ffllx8gs4w0sge"
                         },
                         "format": "table",
-                        "rawSql": "SELECT dataset_split as metric, COUNT(*) as value FROM clean_diabetes GROUP BY dataset_split",
+                        "rawSql": "SELECT dataset_split as metric, COUNT(*) as value FROM clean_properties GROUP BY dataset_split",
                         "refId": "A"
                     }
                 ],
@@ -300,7 +300,7 @@
                             "uid": "ffllx8gs4w0sge"
                         },
                         "format": "time_series",
-                        "rawSql": "SELECT date_trunc('hour', load_timestamp) as time, COUNT(*) as value FROM raw_diabetes GROUP BY 1 ORDER BY 1",
+                        "rawSql": "SELECT date_trunc('hour', load_timestamp) as time, COUNT(*) as value FROM raw_properties GROUP BY 1 ORDER BY 1",
                         "refId": "A"
                     }
                 ],
@@ -333,11 +333,11 @@
                             "uid": "ffllx8gs4w0sge"
                         },
                         "format": "table",
-                        "rawSql": "SELECT CASE WHEN readmitted_binary = 1 THEN 'Readmitido <30 d\u00edas' ELSE 'No readmitido' END as metric, COUNT(*) as value FROM clean_diabetes GROUP BY readmitted_binary",
+                        "rawSql": "SELECT CASE WHEN price < 100000 THEN '< 100k' WHEN price < 300000 THEN '100k-300k' WHEN price < 600000 THEN '300k-600k' WHEN price < 1000000 THEN '600k-1M' ELSE '> 1M' END as metric, COUNT(*) as value FROM clean_properties GROUP BY 1",
                         "refId": "A"
                     }
                 ],
-                "title": "Distribuci\u00f3n Target (Readmisi\u00f3n)",
+                "title": "Distribuci\u00f3n de Precios",
                 "type": "piechart"
             },
             {

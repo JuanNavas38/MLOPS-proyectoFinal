@@ -1,0 +1,55 @@
+name: build-and-push-images
+
+# CI (RF / sección 6.12): construye y publica las imágenes propias en DockerHub.
+# No se construyen imágenes en la máquina de despliegue: Kubernetes las consume de DockerHub.
+# Tag por commit SHA + 'latest' para desarrollo.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "src/**"
+      - "dags/**"
+      - "docker/**"
+      - ".github/workflows/build-images.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: docker.io
+  DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}   # TODO: configurar secret en GitHub
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: realty-api
+            dockerfile: docker/api/Dockerfile
+          - name: realty-ui
+            dockerfile: docker/streamlit/Dockerfile
+          - name: realty-mlflow
+            dockerfile: docker/mlflow/Dockerfile
+          - name: realty-airflow
+            dockerfile: docker/airflow/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.name }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.name }}:latest

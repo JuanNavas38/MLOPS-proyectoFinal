@@ -5,8 +5,8 @@ executor: LocalExecutor
 # Sin personalización — usamos la oficial directamente
 images:
   airflow:
-    repository: masterofelectronic/airflow-mlops
-    tag: "2.9.1"
+    repository: juannavas38/realty-airflow   # TODO: confirmar usuario DockerHub
+    tag: "latest"
     pullPolicy: IfNotPresent
 
 # ── Paquetes adicionales ──────────────────────────────────────────────────────

@@ -1,51 +1,41 @@
+"""
+Prueba de carga (RF10) — API de inferencia de precios inmobiliarios.
+Ejecuta predicciones para evidenciar en Grafana el efecto sobre latencia,
+throughput y tasa de errores.
+"""
+
 import random
 from locust import HttpUser, task, between
 
-SAMPLE_PATIENTS = [
+SAMPLE_PROPERTIES = [
     {
-        "time_in_hospital": 5, "num_lab_procedures": 45, "num_procedures": 2,
-        "num_medications": 15, "number_outpatient": 0, "number_emergency": 1,
-        "number_inpatient": 2, "number_diagnoses": 7, "age_encoded": 6,
-        "admission_type_encoded": 1, "discharge_encoded": 1,
-        "admission_source_encoded": 1, "insulin_encoded": 2, "change_encoded": 1,
-        "diabetesmed_encoded": 1, "a1cresult_encoded": 0,
-        "max_glu_serum_encoded": 0, "num_medications_log": 2.77,
-        "service_utilization": 3,
+        "brokered_by": "103378", "status": "for_sale",
+        "bed": 3, "bath": 2, "acre_lot": 0.12,
+        "street": "1962661", "city": "Adjuntas", "state": "Puerto Rico",
+        "zip_code": "00601", "house_size": 920.0, "prev_sold_date": None,
     },
     {
-        "time_in_hospital": 2, "num_lab_procedures": 30, "num_procedures": 0,
-        "num_medications": 8, "number_outpatient": 1, "number_emergency": 0,
-        "number_inpatient": 0, "number_diagnoses": 4, "age_encoded": 4,
-        "admission_type_encoded": 2, "discharge_encoded": 1,
-        "admission_source_encoded": 2, "insulin_encoded": 0, "change_encoded": 0,
-        "diabetesmed_encoded": 1, "a1cresult_encoded": 1,
-        "max_glu_serum_encoded": 0, "num_medications_log": 2.20,
-        "service_utilization": 1,
+        "brokered_by": "52707", "status": "for_sale",
+        "bed": 4, "bath": 3, "acre_lot": 0.30,
+        "street": "1758218", "city": "Sierra Madre", "state": "California",
+        "zip_code": "91024", "house_size": 2100.0, "prev_sold_date": "2018-05-14",
     },
     {
-        "time_in_hospital": 10, "num_lab_procedures": 70, "num_procedures": 5,
-        "num_medications": 25, "number_outpatient": 2, "number_emergency": 3,
-        "number_inpatient": 4, "number_diagnoses": 9, "age_encoded": 8,
-        "admission_type_encoded": 1, "discharge_encoded": 3,
-        "admission_source_encoded": 1, "insulin_encoded": 3, "change_encoded": 1,
-        "diabetesmed_encoded": 1, "a1cresult_encoded": 2,
-        "max_glu_serum_encoded": 1, "num_medications_log": 3.26,
-        "service_utilization": 9,
+        "brokered_by": "11075", "status": "ready_to_build",
+        "bed": 5, "bath": 4, "acre_lot": 1.20,
+        "street": "990337", "city": "Austin", "state": "Texas",
+        "zip_code": "78704", "house_size": 3400.0, "prev_sold_date": None,
     },
 ]
 
 
-class DiabetesAPIUser(HttpUser):
+class RealtyAPIUser(HttpUser):
     wait_time = between(0.5, 2)
 
     @task(10)
     def predict(self):
-        payload = random.choice(SAMPLE_PATIENTS)
-        with self.client.post(
-            "/predict",
-            json=payload,
-            catch_response=True
-        ) as response:
+        payload = random.choice(SAMPLE_PROPERTIES)
+        with self.client.post("/predict", json=payload, catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
