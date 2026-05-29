@@ -216,7 +216,7 @@ with DAG(
                 "entrenamiento → registro en MLflow → comparación → promoción condicionada",
     default_args=DEFAULT_ARGS,
     start_date=datetime(2026, 1, 1),
-    schedule_interval=None,
+    schedule=None,        # Airflow 3.x (antes 'schedule_interval'); disparo manual/por evento
     catchup=False,
     max_active_runs=1,
     tags=["mlops", "realty", "nivel4", "javeriana"],

@@ -9,9 +9,16 @@ import os
 import requests
 import pandas as pd
 import streamlit as st
+from sqlalchemy import create_engine
 
 API_URL = os.getenv("API_URL", "http://realty-api-svc:8000")
 DB_URL  = os.getenv("DATABASE_URL", "postgresql://mlops:mlops2026@postgres-svc:5432/mlops")
+
+
+@st.cache_resource
+def get_engine():
+    url = DB_URL.replace("postgresql://", "postgresql+psycopg2://")
+    return create_engine(url, pool_pre_ping=True)
 
 st.set_page_config(page_title="Realty Price Predictor", page_icon="🏠", layout="wide")
 st.title("🏠 Realty Price Predictor")
@@ -88,7 +95,7 @@ with tab_history:
             FROM training_audit
             ORDER BY executed_at DESC
             """,
-            DB_URL,
+            get_engine(),
         )
         if df.empty:
             st.info("Aún no hay lotes procesados.")
