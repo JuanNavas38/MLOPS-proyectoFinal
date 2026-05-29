@@ -24,7 +24,7 @@ spec:
               memory: "512Mi"
             limits:
               cpu: "500m"
-              memory: "2Gi"      # la API carga el dataset completo en memoria
+              memory: "3Gi"      # la API carga el dataset completo y sirve lotes grandes (OOM con 2Gi)
           readinessProbe:
             httpGet:
               path: /health

@@ -16,12 +16,14 @@ spec:
     path: k8s
     directory:
       recurse: true
-      # Los *-dashboard.json son dashboards de Grafana, NO manifiestos K8s: deben
-      # cargarse vía ConfigMap, no aplicarse directo. Se excluyen del sync.
-      exclude: "{observability/grafana/*-dashboard.json,mlflow-chart/**}"
+      # Excluir lo que NO son manifiestos K8s aplicables:
+      #  - mlflow/Dockerfile (build, no manifiesto)
+      #  - dashboards de Grafana (JSON, se cargan vía ConfigMap/UI)
+      #  - airflow/ (helm-values: lo gestiona la Application Helm aparte)
+      exclude: "{mlflow/Dockerfile,observability/grafana/*-dashboard.json,airflow/*}"
   destination:
     server: https://kubernetes.default.svc
-    namespace: mlops
+    namespace: default   # solo afecta recursos sin namespace; cada manifiesto trae el suyo
   syncPolicy:
     automated:
       prune: true

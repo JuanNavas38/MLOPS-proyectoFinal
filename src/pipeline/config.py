@@ -38,3 +38,5 @@ RMSE_WORSEN_MAX_PCT     = float(os.getenv("RMSE_WORSEN_MAX_PCT", "1.0"))
 
 # Suficiencia mínima de datos para entrenar
 MIN_TRAIN_ROWS = int(os.getenv("MIN_TRAIN_ROWS", "200"))
+# Tope de filas para el FIT (evita saturar CPU del nodo único de minikube)
+TRAIN_SAMPLE_MAX = int(os.getenv("TRAIN_SAMPLE_MAX", "60000"))

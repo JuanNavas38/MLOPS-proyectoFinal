@@ -17,7 +17,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder
 
 from pipeline.config import (MLFLOW_URI, EXPERIMENT, MODEL_NAME,
-                             NUMERIC_FEATURES, CATEGORICAL_FEATURES, FEATURES, TARGET)
+                             NUMERIC_FEATURES, CATEGORICAL_FEATURES, FEATURES, TARGET,
+                             TRAIN_SAMPLE_MAX)
 from pipeline.db import read_sql
 from pipeline.mlflow_utils import get_client
 
@@ -53,7 +54,7 @@ def _build_estimator() -> TransformedTargetRegressor:
     model = Pipeline([
         ("prep", pre),
         ("reg", HistGradientBoostingRegressor(
-            max_iter=300, learning_rate=0.08, max_depth=8, random_state=42)),
+            max_iter=150, learning_rate=0.1, max_depth=8, random_state=42)),
     ])
     # Entrena en log(price) y predice en escala de precio.
     return TransformedTargetRegressor(regressor=model, func=np.log1p, inverse_func=np.expm1)
@@ -87,6 +88,12 @@ def train_candidate(batch_id: str, reason: str = "") -> dict:
     train_df, val_df, test_df = _load_split("train"), _load_split("val"), _load_split("test")
     if test_df.empty:        # garantizar evaluación
         test_df = val_df if not val_df.empty else train_df
+
+    # Tope de muestreo del fit: en minikube (nodo único) entrenar sobre cientos de
+    # miles de filas satura la CPU y ahoga el control plane.
+    if len(train_df) > TRAIN_SAMPLE_MAX:
+        train_df = train_df.sample(n=TRAIN_SAMPLE_MAX, random_state=42)
+        logger.info("Muestreo de entrenamiento: %s filas (de tope %s)", len(train_df), TRAIN_SAMPLE_MAX)
 
     X_train, y_train = train_df[FEATURES], train_df[TARGET].to_numpy()
     X_test,  y_test  = test_df[FEATURES],  test_df[TARGET].to_numpy()

@@ -65,12 +65,13 @@ env:
   - name: AIRFLOW__DAG_PROCESSOR__DAG_FILE_PROCESSOR_TIMEOUT
     value: "120"
 
-# Recursos moderados (laptop / minikube 6GB)
+# Recursos (minikube 8GB). El scheduler ejecuta las tareas (LocalExecutor),
+# incluido preprocess de lotes grandes -> necesita memoria holgada.
 scheduler:
   replicas: 1
   resources:
-    requests: {cpu: "200m", memory: "512Mi"}
-    limits:   {cpu: "1000m", memory: "1536Mi"}
+    requests: {cpu: "200m", memory: "768Mi"}
+    limits:   {cpu: "1500m", memory: "3Gi"}
 
 dagProcessor:
   enabled: true
