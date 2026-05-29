@@ -4,7 +4,7 @@ metadata:
   name: realty-ui
   namespace: streamlit
 spec:
-  replicas: 1
+  replicas: 2   # demo GitOps: escalado declarativo aplicado por Argo CD desde Git
   selector:
     matchLabels:
       app: realty-ui

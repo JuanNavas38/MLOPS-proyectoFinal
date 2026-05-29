@@ -1,0 +1,32 @@
+# Application de Argo CD para Airflow (chart oficial + nuestros values del repo).
+# Multi-source: source 'values' = nuestro repo (referencia); source chart = repo de Airflow.
+#   kubectl apply -n argocd -f argocd/application-airflow.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: realty-airflow
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/JuanNavas38/MLOPS-proyectoFinal.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://airflow.apache.org
+      chart: airflow
+      targetRevision: "1.21.0"
+      helm:
+        valueFiles:
+          - $values/k8s/airflow/helm-values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: airflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
