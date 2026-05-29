@@ -152,7 +152,8 @@ configurar en GitHub los secrets `DOCKERHUB_USERNAME` y `DOCKERHUB_TOKEN` para e
 | Grafana | 30300 |
 | Locust | 30089 |
 
-> En minikube: `minikube service <svc> -n mlops --url` o `kubectl port-forward`.
+> Cada servicio vive en su propio namespace (ver tabla abajo). Ej.:
+> `minikube service realty-api-svc -n api --url`, `... realty-ui-svc -n streamlit`, `... grafana-svc -n grafana`.
 
 ---
 
@@ -177,13 +178,71 @@ configurar en GitHub los secrets `DOCKERHUB_USERNAME` y `DOCKERHUB_TOKEN` para e
 
 ---
 
-## Pendientes (roadmap por fases)
+## Estado actual (~80%)
 
-1. **Fase 0** — levantar la API de datos local e inspeccionar su contrato real.
-2. **Fase 1** — implementar el DAG (cliente API, validaciones, drift, preprocesamiento, entrenamiento, comparación/promoción).
-3. **Fase 2** — completar API/UI y dejar el flujo end-to-end funcionando local.
-4. **Fase 3** — desplegar en minikube con recursos/probes.
-5. **Fase 4** — CI (GitHub Actions → DockerHub) + Argo CD + documentación + video.
+**Funcionando y validado end-to-end:**
+- Pipeline completo en Airflow (DAG de 19 tareas, 2 bifurcaciones): ingesta por lotes → validación
+  (esquema, calidad, categorías nuevas, drift KS) → decisión de entrenamiento (RF4) → entrenamiento
+  + registro en MLflow (RF5) → comparación contra productivo + promoción condicionada (RF6).
+  Demostrados los 3 caminos: **entrenó+promovió**, **entrenó+rechazó**, **no-entrenó**.
+- MLflow (Postgres + MinIO), FastAPI con **recarga sin redespliegue** (RF7) y registro de inferencias (RF8),
+  Streamlit (inferencia + historial).
+- CI/CD: GitHub Actions → DockerHub (4 imágenes).
+- Kubernetes en minikube: **un namespace por servicio** (10 namespaces), DNS cross-namespace, probes y recursos.
+- Observabilidad: Prometheus, Grafana y Locust desplegados.
+
+**Pendiente:**
+- Argo CD (GitOps) — sincronización declarativa.
+- Evidencia de prueba de carga Locust → Grafana (RF10).
+- Documentación final y video de sustentación.
+
+| Fase | Estado |
+|---|---|
+| 0 — Contrato de la API de datos | ✅ |
+| 1 — DAG end-to-end (local) | ✅ |
+| 2 — API/UI contra MLflow | ✅ |
+| 3 — Despliegue en minikube (multi-namespace) | ✅ |
+| 4 — Argo CD + observabilidad + docs + video | 🔜 en curso |
+
+---
+
+## Decisiones de diseño
+
+- **Regresión con `TransformedTargetRegressor(log1p)`**: el modelo es un `Pipeline` de scikit-learn que
+  incluye su propio preprocesamiento (imputación + `OrdinalEncoder` con `handle_unknown`). Así la API
+  envía **features crudas** y el modelo hace todo internamente — clave para RF7 (no se quema preprocesamiento
+  en la API). Se entrena sobre `log(price)` y se predice en escala de precio.
+- **Métrica prioritaria: MAE** (con RMSE/MAPE/R² de apoyo). Regla de promoción: promover solo si
+  **MAE baja ≥ 3 % y RMSE no empeora > 1 %**. MAPE se reporta pero no se usa como criterio porque hay
+  precios muy bajos que lo inflan.
+- **Tabla `training_audit` como fuente de verdad del historial**: cada lote escribe una fila (decisión,
+  razón, drift, métricas, promoción). Es lo que lee Streamlit (RF9) y desacopla las tareas del DAG.
+- **Categóricas como texto en CLEAN** (no pre-codificadas): el encoding vive en el `Pipeline` del modelo,
+  manteniendo coherencia entre entrenamiento e inferencia.
+- **Un namespace por servicio** (10 ns) con Secret replicado y DNS FQDN (`svc.namespace`), por recomendación
+  del docente (estilo Proyecto 3 ampliado).
+- **Airflow vía Helm chart oficial** (no manifiestos crudos): Airflow 3.x requiere api-server + scheduler +
+  dag-processor + triggerer; el chart los gestiona. DAGs y código del pipeline **horneados en la imagen**
+  (self-contained, sin gitSync/PVC).
+- **`mlflow-skinny` en la imagen de Airflow**: las tareas solo necesitan el cliente de tracking/registry,
+  no el servidor; evita el choque de dependencias (Flask/SQLAlchemy) con Airflow.
+- **CI como fuente de imágenes**: Kubernetes consume de DockerHub; no se construyen imágenes en la máquina
+  de despliegue.
+
+---
+
+## Problemas encontrados y soluciones
+
+| Problema | Causa | Solución |
+|---|---|---|
+| Migración de Airflow fallaba (`DeclarativeBase`) | Instalar mlflow/sklearn sin las *constraints* de Airflow rompía SQLAlchemy | Imagen con `--constraint` oficial de Airflow + `mlflow-skinny` + base `3.0.6-python3.12` |
+| Conflicto `packaging<25` vs constraints | mlflow pide `<25`, Airflow fija `==25` | Relajar solo esa línea de las constraints (`sed`) |
+| api-server de Airflow en CrashLoop | Con varios workers de uvicorn los primeros mueren | `AIRFLOW__API__WORKERS=1` |
+| `DagBag import timeout` al ejecutar tareas | El DAG importa sklearn/mlflow (pesado) | Subir `AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT=120` |
+| API no cargaba el modelo (`No module named '_loss'`) | sklearn distinto entre entrenamiento (1.7.1) e inferencia (1.4.2) | Alinear **scikit-learn 1.7.1** en ambas imágenes |
+| PVCs en `Pending` | Manifiestos pedían `storageClassName: local-path` (de k3s) | Quitarlo → usar `standard` (default de minikube) |
+| `data-api` y tareas con `OOMKilled` | Lotes muy grandes (hasta ~360k filas) en nodo de 6 GB | Subir Docker/WSL a 10 GB, minikube a 8 GB, `data-api`/scheduler a 3 GB, y **cap de 60k filas** en el fit |
+| `minikube image load :latest` no refrescaba | Tag `latest` cacheado en el nodo | Usar tag único o `imagePullPolicy`/CI |
 
 ---
 
