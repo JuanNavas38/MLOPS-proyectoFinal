@@ -1,0 +1,40 @@
+# Un namespace por servicio (recomendación del docente, estilo Proyecto 3 ampliado).
+apiVersion: v1
+kind: Namespace
+metadata: {name: postgres,   labels: {project: realty-mlops, tier: data}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: minio,      labels: {project: realty-mlops, tier: data}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: mlflow,     labels: {project: realty-mlops, tier: tracking}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: data-api,   labels: {project: realty-mlops, tier: source}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: api,        labels: {project: realty-mlops, tier: inference}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: streamlit,  labels: {project: realty-mlops, tier: ui}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: locust,     labels: {project: realty-mlops, tier: loadtest}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: prometheus, labels: {project: realty-mlops, tier: observability}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: grafana,    labels: {project: realty-mlops, tier: observability}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: airflow,    labels: {project: realty-mlops, tier: orchestration}}

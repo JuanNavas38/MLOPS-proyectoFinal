@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: prometheus
-  namespace: mlops
+  namespace: prometheus
 spec:
   replicas: 1
   selector:
@@ -58,7 +58,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: prometheus-svc
-  namespace: mlops
+  namespace: prometheus
 spec:
   selector:
     app: prometheus

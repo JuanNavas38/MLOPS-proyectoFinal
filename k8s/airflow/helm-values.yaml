@@ -1,96 +1,98 @@
-# ── Executor ──────────────────────────────────────────────────────────────────
+# Values del Helm chart oficial de Airflow (apache-airflow/airflow) — Nivel 4.
+# Airflow 3.x con LocalExecutor, imagen propia (DAGs+pipeline horneados),
+# Postgres EXTERNO (el de la base mlops/airflow_metadata) y MinIO/MLflow del clúster.
+#
+#   helm repo add apache-airflow https://airflow.apache.org
+#   helm install airflow apache-airflow/airflow -n mlops -f k8s/airflow/helm-values.yaml
+
+airflowVersion: "3.0.6"
 executor: LocalExecutor
 
-# ── Imagen oficial de Airflow 3.2.0 ──────────────────────────────────────────
-# Sin personalización — usamos la oficial directamente
 images:
   airflow:
-    repository: juannavas38/realty-airflow   # TODO: confirmar usuario DockerHub
-    tag: "latest"
+    repository: juannavas38/realty-airflow
+    tag: latest
     pullPolicy: IfNotPresent
 
-# ── Paquetes adicionales ──────────────────────────────────────────────────────
-extraPipPackages:
-  - "apache-airflow-providers-postgres"
-  - "psycopg2-binary"
-  - "mlflow"
-  - "scikit-learn"
-  - "xgboost"
-  - "pandas"
-  - "numpy"
+# Clave Fernet estable (en producción iría como Secret externo)
+fernetKey: "1qsiBDIw9fQ02ctMbVuIkKAY5E2wRgjjefEYp4pRfIs="
 
-# ── Base de datos externa ─────────────────────────────────────────────────────
+# Usar nuestro Postgres, no el del chart
+postgresql:
+  enabled: false
 data:
   metadataConnection:
     user: mlops
     pass: mlops2026
-    host: postgres-svc.mlops.svc.cluster.local
+    host: postgres-svc.postgres
     port: 5432
     db: airflow_metadata
-    protocol: postgresql
+    sslmode: disable
 
-# ── Deshabilitar componentes incluidos en el chart ────────────────────────────
-postgresql:
-  enabled: false
-
-redis:
-  enabled: false
-
-# ── Webserver ─────────────────────────────────────────────────────────────────
-webserver:
-  replicas: 1
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-
-# ── Scheduler ─────────────────────────────────────────────────────────────────
-scheduler:
-  replicas: 1
-  resources:
-    requests:
-      cpu: 250m
-      memory: 1Gi
-    limits:
-      cpu: 1500m
-      memory: 3Gi
-
-# ── DAGs ──────────────────────────────────────────────────────────────────────
+# DAGs vienen horneados en la imagen (no gitSync, no PVC)
 dags:
   persistence:
-    enabled: true
-    storageClassName: local-path
-    size: 2Gi
-    accessMode: ReadWriteOnce
-
-# ── Logs ──────────────────────────────────────────────────────────────────────
-logs:
-  persistence:
+    enabled: false
+  gitSync:
     enabled: false
 
-# ── Variables de entorno ──────────────────────────────────────────────────────
+# Variables del pipeline para TODOS los componentes de Airflow
 env:
   - name: MLFLOW_TRACKING_URI
-    value: "http://mlflow-svc.mlops.svc.cluster.local:5000"
+    value: "http://mlflow-svc.mlflow:5000"
+  - name: DATABASE_URL
+    value: "postgresql://mlops:mlops2026@postgres-svc.postgres:5432/mlops"
+  - name: DATA_API_URL
+    value: "http://data-api-svc.data-api:80"
+  - name: DATA_GROUP_NUMBER
+    value: "1"
   - name: MLFLOW_S3_ENDPOINT_URL
-    value: "http://minio-svc.mlops.svc.cluster.local:9000"
+    value: "http://minio-svc.minio:9000"
   - name: AWS_ACCESS_KEY_ID
     value: "minioadmin"
   - name: AWS_SECRET_ACCESS_KEY
     value: "minioadmin2026"
+  - name: PIPELINE_SRC
+    value: "/opt/airflow/src"
+  # 1 worker en el api-server: arranque único y estable (con varios, los primeros mueren
+  # y el readiness probe mata el pod antes de estabilizar).
+  - name: AIRFLOW__API__WORKERS
+    value: "1"
+  # El DAG importa sklearn/mlflow (pesado): subir el timeout de parseo para evitar
+  # "DagBag import timeout" al ejecutar tareas. (Mejora futura: imports perezosos.)
+  - name: AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT
+    value: "120"
+  - name: AIRFLOW__DAG_PROCESSOR__DAG_FILE_PROCESSOR_TIMEOUT
+    value: "120"
 
-# ── Seguridad ─────────────────────────────────────────────────────────────────
-webserverSecretKey: "mlops2026javeriana"
-defaultAirflowUsername: admin
-defaultAirflowPassword: admin2026
+# Recursos moderados (laptop / minikube 6GB)
+scheduler:
+  replicas: 1
+  resources:
+    requests: {cpu: "200m", memory: "512Mi"}
+    limits:   {cpu: "1000m", memory: "1536Mi"}
 
-# ── Configuración Airflow ─────────────────────────────────────────────────────
-config:
-  core:
-    load_examples: "false"
-    dags_are_paused_at_creation: "false"
-  scheduler:
-    dag_dir_list_interval: "30"
+dagProcessor:
+  enabled: true
+  resources:
+    requests: {cpu: "100m", memory: "384Mi"}
+    limits:   {cpu: "500m", memory: "1Gi"}
+
+apiServer:
+  resources:
+    requests: {cpu: "100m", memory: "512Mi"}
+    limits:   {cpu: "500m", memory: "1Gi"}
+
+triggerer:
+  replicas: 1
+  resources:
+    requests: {cpu: "100m", memory: "384Mi"}
+    limits:   {cpu: "500m", memory: "768Mi"}
+
+statsd:
+  enabled: false
+
+# Exponer la UI por NodePort
+webserver:
+  service:
+    type: NodePort

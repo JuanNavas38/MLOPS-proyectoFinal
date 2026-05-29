@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: realty-ui
-  namespace: mlops
+  namespace: streamlit
 spec:
   replicas: 1
   selector:
@@ -20,7 +20,7 @@ spec:
             - containerPort: 8501
           env:
             - name: API_URL
-              value: "http://realty-api-svc:8000"
+              value: "http://realty-api-svc.api:8000"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

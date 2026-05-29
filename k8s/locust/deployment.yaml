@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: locust
-  namespace: mlops
+  namespace: locust
 spec:
   replicas: 1
   selector:
@@ -19,7 +19,7 @@ spec:
           args:
             - -f
             - /locust/locustfile.py
-            - --host=http://realty-api-svc:8000
+            - --host=http://realty-api-svc.api:8000
             - --web-port=8089
           ports:
             - containerPort: 8089
@@ -48,7 +48,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: locust-svc
-  namespace: mlops
+  namespace: locust
 spec:
   selector:
     app: locust

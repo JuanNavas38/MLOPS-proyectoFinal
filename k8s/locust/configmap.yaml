@@ -1,0 +1,57 @@
+apiVersion: v1
+data:
+  locustfile.py: |
+    """
+    Prueba de carga (RF10) — API de inferencia de precios inmobiliarios.
+    Ejecuta predicciones para evidenciar en Grafana el efecto sobre latencia,
+    throughput y tasa de errores.
+    """
+
+    import random
+    from locust import HttpUser, task, between
+
+    SAMPLE_PROPERTIES = [
+        {
+            "brokered_by": "103378", "status": "for_sale",
+            "bed": 3, "bath": 2, "acre_lot": 0.12,
+            "street": "1962661", "city": "Adjuntas", "state": "Puerto Rico",
+            "zip_code": "00601", "house_size": 920.0, "prev_sold_date": None,
+        },
+        {
+            "brokered_by": "52707", "status": "for_sale",
+            "bed": 4, "bath": 3, "acre_lot": 0.30,
+            "street": "1758218", "city": "Sierra Madre", "state": "California",
+            "zip_code": "91024", "house_size": 2100.0, "prev_sold_date": "2018-05-14",
+        },
+        {
+            "brokered_by": "11075", "status": "ready_to_build",
+            "bed": 5, "bath": 4, "acre_lot": 1.20,
+            "street": "990337", "city": "Austin", "state": "Texas",
+            "zip_code": "78704", "house_size": 3400.0, "prev_sold_date": None,
+        },
+    ]
+
+
+    class RealtyAPIUser(HttpUser):
+        wait_time = between(0.5, 2)
+
+        @task(10)
+        def predict(self):
+            payload = random.choice(SAMPLE_PROPERTIES)
+            with self.client.post("/predict", json=payload, catch_response=True) as response:
+                if response.status_code == 200:
+                    response.success()
+                else:
+                    response.failure(f"Status {response.status_code}: {response.text}")
+
+        @task(2)
+        def health_check(self):
+            self.client.get("/health")
+
+        @task(1)
+        def model_info(self):
+            self.client.get("/model-info")
+kind: ConfigMap
+metadata:
+  name: locust-config
+  namespace: locust

@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postgres-init
-  namespace: mlops
+  namespace: postgres
 data:
   init.sql: |
     -- Backend de metadatos de MLflow
