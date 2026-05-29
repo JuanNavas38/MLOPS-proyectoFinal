@@ -40,3 +40,7 @@ RMSE_WORSEN_MAX_PCT     = float(os.getenv("RMSE_WORSEN_MAX_PCT", "1.0"))
 MIN_TRAIN_ROWS = int(os.getenv("MIN_TRAIN_ROWS", "200"))
 # Tope de filas para el FIT (evita saturar CPU del nodo único de minikube)
 TRAIN_SAMPLE_MAX = int(os.getenv("TRAIN_SAMPLE_MAX", "60000"))
+# Tope de filas a INGERIR por lote. La API entrega lotes de tamaño muy variable
+# (hasta ~360k) que saturan la memoria del nodo único local. En producción se
+# escalaría el clúster o se procesaría por streaming; aquí se acota por hardware.
+INGEST_MAX_RECORDS = int(os.getenv("INGEST_MAX_RECORDS", "80000"))

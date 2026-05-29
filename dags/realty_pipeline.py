@@ -58,6 +58,14 @@ def fetch_batch_from_api(**ctx):
 
     batch_number = payload.get("batch_number")
     records = payload["data"]
+    # Cap de ingesta por límite de hardware del clúster local (ver config)
+    if len(records) > config.INGEST_MAX_RECORDS:
+        import logging
+        logging.getLogger("airflow.task").info(
+            "Lote de %s registros truncado a %s (INGEST_MAX_RECORDS)",
+            len(records), config.INGEST_MAX_RECORDS)
+        records = records[:config.INGEST_MAX_RECORDS]
+        payload["data"] = records
     batch_id = f"g{config.GROUP_NUMBER}_b{batch_number}"
 
     with open(_payload_path(batch_id), "w", encoding="utf-8") as f:
