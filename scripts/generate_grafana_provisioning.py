@@ -7,10 +7,24 @@ ingest_dash_path = os.path.join(base_dir, "ingestion-dashboard.json")
 output_path = os.path.join(base_dir, "provisioning.yaml")
 
 with open(api_dash_path, "r", encoding="utf-8") as f:
-    api_dash_json = f.read()
+    api_data = json.load(f)
+
+if "dashboard" in api_data:
+    api_data = api_data["dashboard"]
+    with open(api_dash_path, "w", encoding="utf-8") as f:
+        json.dump(api_data, f, indent=4, ensure_ascii=False)
+
+api_dash_json = json.dumps(api_data, indent=4, ensure_ascii=False)
 
 with open(ingest_dash_path, "r", encoding="utf-8") as f:
-    ingest_dash_json = f.read()
+    ingest_data = json.load(f)
+
+if "dashboard" in ingest_data:
+    ingest_data = ingest_data["dashboard"]
+    with open(ingest_dash_path, "w", encoding="utf-8") as f:
+        json.dump(ingest_data, f, indent=4, ensure_ascii=False)
+
+ingest_dash_json = json.dumps(ingest_data, indent=4, ensure_ascii=False)
 
 # Indent JSON files for YAML multiline block format
 def indent_multiline(text, indent=4):
