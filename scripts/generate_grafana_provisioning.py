@@ -47,6 +47,7 @@ data:
         isDefault: true
       - name: PostgreSQL
         type: postgres
+        uid: ffllx8gs4w0sge
         url: postgres-svc.postgres:5432
         database: mlops
         user: mlops
