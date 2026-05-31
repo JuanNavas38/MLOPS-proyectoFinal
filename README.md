@@ -1,18 +1,18 @@
 # MLOps Proyecto Final — Nivel 4: Automatización, decisión de reentrenamiento y despliegue GitOps
 
 **Pontificia Universidad Javeriana — Maestría en Inteligencia Artificial**
+
 **Curso:** Operaciones de Machine Learning
-**Estudiantes:** _(por completar)_
+
+**Estudiantes:**
+* Juan Navas
+* Camila Cuellar
+* Jhonathan Murcia
 
 > Sistema MLOps que recolecta datos por lotes desde una API externa, los valida y procesa,
 > **decide automáticamente si reentrenar**, registra experimentos en MLflow, **promueve el
 > modelo solo si mejora al productivo**, y expone inferencia vía FastAPI tomando MLflow como
 > única fuente de verdad. Todo desplegado en Kubernetes y sincronizado con **Argo CD (GitOps)**.
-
-> ⚠️ **Estado: ESQUELETO.** La infraestructura (K8s, MLflow, Postgres, MinIO, observabilidad,
-> Locust) se reutiliza de una entrega previa y ya está neutralizada al dominio inmobiliario.
-> La lógica nueva del Nivel 4 (cliente API, bifurcaciones del DAG, comparación/promoción,
-> recarga RF7, CI y Argo CD) está marcada con `TODO` y se implementa por fases.
 
 ---
 
@@ -32,37 +32,51 @@ con reglas técnicas, si amerita reentrenar.
 
 ## Arquitectura
 
-```
-Usuario → GitHub → GitHub Actions → DockerHub
-                                        │
-                                   Argo CD (GitOps)
-                                        │
-                                   Kubernetes
-   ┌────────────────────────────────────────────────────────────┐
-   │  API de datos (lotes) → Airflow DAG → PostgreSQL (RAW/CLEAN) │
-   │                              │                               │
-   │                           MLflow ── Postgres + MinIO         │
-   │                              │                               │
-   │   FastAPI (carga modelo desde MLflow, recarga sin redeploy)  │
-   │        │                 │                                   │
-   │   Streamlit          Prometheus → Grafana   ← Locust         │
-   └────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    User([Usuario]) -->|Push Code| GH[GitHub]
+    GH -->|Trigger CI| GHA[GitHub Actions]
+    GHA -->|Build & Push Images| DH[(DockerHub)]
+    DH -->|Image Pull| K8s[Kubernetes Cluster]
+    
+    subgraph GitOps
+        Argo[Argo CD] -->|Sync Manifests| K8s
+    end
+
+    subgraph Cluster_K8s [Kubernetes: Namespaces]
+        direction TB
+        DataAPI[API de Datos] -->|Fetch Batch| Airflow[Airflow DAG]
+        Airflow -->|Write raw/clean data| DB[(PostgreSQL)]
+        Airflow -->|Track Experiment| MLflow[MLflow Registry]
+        
+        MLflow -->|Metadata Store| DB
+        MLflow -->|Artifact Store| MinIO[(MinIO)]
+        
+        Streamlit[Streamlit UI] -->|Predict Requests| API[FastAPI Inferencia]
+        Locust[Locust Load Test] -->|Simulate Traffic| API
+        
+        API -->|Read Active Model| MLflow
+        API -->|Write Logs| DB
+        
+        API -->|Prometheus Metrics| Prom[Prometheus]
+        Prom -->|Query Metrics| Grafana[Grafana Dashboards]
+    end
 ```
 
 ### Componentes
 
-| Componente | Tecnología | Estado |
-|---|---|---|
-| Orquestación | Apache Airflow (Helm) | reusa base · DAG nuevo |
-| RAW / CLEAN DATA | PostgreSQL 15 (`raw_properties` / `clean_properties`) | esquema nuevo |
-| Object storage (artefactos) | MinIO | reusa base |
-| ML Tracking / Registry | MLflow 2.22.0 (backend Postgres) | reusa base |
-| API de inferencia | FastAPI + Uvicorn | reescrita (regresión + `/reload`) |
-| Interfaz | Streamlit (inferencia + historial) | reescrita |
-| Observabilidad | Prometheus + Grafana | reusa base |
-| Pruebas de carga | Locust 2.24.0 | reescrita |
-| CI | GitHub Actions → DockerHub | **nuevo** (`.github/workflows/`) |
-| GitOps | Argo CD | **nuevo** (`argocd/`) |
+| Componente | Tecnología |
+|---|---|
+| Orquestación | Apache Airflow (Helm) | 
+| RAW / CLEAN DATA | PostgreSQL 15 (`raw_properties` / `clean_properties`) |
+| Object storage (artefactos) | MinIO | 
+| ML Tracking / Registry | MLflow 2.22.0 (backend Postgres) | 
+| API de inferencia | FastAPI + Uvicorn |
+| Interfaz | Streamlit (inferencia + historial) | 
+| Observabilidad | Prometheus + Grafana |
+| Pruebas de carga | Locust 2.24.0 |
+| CI | GitHub Actions → DockerHub |
+| GitOps | Argo CD |
 
 ---
 
@@ -70,17 +84,35 @@ Usuario → GitHub → GitHub Actions → DockerHub
 
 19 tareas con **dos bifurcaciones explícitas**:
 
-```
-start → fetch_batch_from_api → store_raw_batch → validate_schema →
-validate_data_quality → detect_new_categories → detect_data_drift →
-preprocess_data → decide_training ──┬─→ skip_training ─────────────────────┐
-                                    └─→ train_candidate_model →            │
-                                        evaluate_candidate_model →         │
-                                        register_candidate_in_mlflow →     │
-                                        compare_with_production →          │
-                                        decide_promotion ─┬→ promote_model →┤
-                                                          └→ reject_model ─→┤
-                                                          notify_or_log_result → end
+```mermaid
+graph TD
+    start([start]) --> fetch[fetch_batch_from_api]
+    fetch --> store[store_raw_batch]
+    store --> val_schema[validate_schema]
+    val_schema --> val_quality[validate_data_quality]
+    val_quality --> new_cat[detect_new_categories]
+    new_cat --> drift[detect_data_drift]
+    drift --> prep[preprocess_data]
+    prep --> decide_train{decide_training}
+    
+    %% Branch decide_training
+    decide_train -->|No / Skip| skip_train[skip_training]
+    decide_train -->|Yes / Train| train[train_candidate_model]
+    
+    train --> eval[evaluate_candidate_model]
+    eval --> register[register_candidate_in_mlflow]
+    register --> compare[compare_with_production]
+    compare --> decide_promo{decide_promotion}
+    
+    %% Branch decide_promotion
+    decide_promo -->|Yes / Promote| promote[promote_model]
+    decide_promo -->|No / Reject| reject[reject_model]
+    
+    skip_train --> notify[notify_or_log_result]
+    promote --> notify
+    reject --> notify
+    
+    notify --> end_dag([end])
 ```
 
 - **`decide_training`** (RF4): entrena solo si hay drift / nuevas categorías frecuentes /
@@ -122,38 +154,61 @@ La recarga es atómica con fallback al modelo previo si la descarga falla (ver `
 > Kubernetes consume imágenes **desde DockerHub** (construidas por GitHub Actions). No se construyen
 > imágenes en la máquina de despliegue ni se usa `kubectl apply` manual como mecanismo principal.
 
+### Paso 1: Levantar el Clúster Local
+Se puede usar Docker Desktop (Kubernetes habilitado) o Minikube (mínimo 4 CPUs y 8 GB RAM):
 ```bash
-# Clúster local
+# Si se usa Minikube:
 minikube start --cpus 4 --memory 8192 --addons ingress,metrics-server
-
-# Instalar Argo CD
-kubectl create namespace argocd
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-
-# Registrar la aplicación (a partir de aquí Argo CD sincroniza Git → clúster)
-kubectl apply -n argocd -f argocd/application.yaml
 ```
 
-Secrets (`k8s/secrets.yaml`) y credenciales se gestionan fuera del código (RF seguridad). Falta
-configurar en GitHub los secrets `DOCKERHUB_USERNAME` y `DOCKERHUB_TOKEN` para el workflow de CI.
+### Paso 2: Instalar Argo CD en el Clúster
+```bash
+kubectl create namespace argocd
+kubectl apply --server-side -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
+
+### Paso 3: Aplicar Namespace y Secretos de Base (Indispensable)
+Dado que Argo CD lee la definición declarativa de aplicaciones, los secretos y namespaces base se definen primero para habilitar credenciales:
+```bash
+kubectl apply -f k8s/namespaces.yaml
+kubectl apply -f k8s/secrets.yaml
+```
+
+### Paso 4: Registrar y Sincronizar las Aplicaciones en Argo CD
+Aplica los manifiestos de sincronización para desplegar los microservicios del proyecto y el clúster de Airflow:
+```bash
+# Desplegar Postgres, MinIO, MLflow, API, UI, Locust y Observabilidad
+kubectl apply -n argocd -f argocd/application.yaml
+
+# Desplegar Airflow (vía Helm con values declarativos)
+kubectl apply -n argocd -f argocd/application-airflow.yaml
+```
+
+### Paso 5: Inicialización de la Base de Datos de Airflow (Si se requiere)
+En entornos Airflow 3.x con FabAuthManager, si los pods quedan esperando migraciones, corre estos comandos en el scheduler para actualizar el esquema:
+```bash
+kubectl exec -n airflow statefulset/realty-airflow-scheduler -c scheduler -- airflow db migrate
+kubectl exec -n airflow statefulset/realty-airflow-scheduler -c scheduler -- airflow fab-db migrate
+```
 
 ---
 
-## Acceso a los servicios (NodePort)
+## Acceso a los servicios (NodePort / Localhost)
 
-| Servicio | NodePort |
-|---|---|
-| Airflow UI | 30088 |
-| MLflow UI | 30500 |
-| MinIO Console | 30900 |
-| FastAPI | 30800 |
-| Streamlit | 30801 |
-| Prometheus | 30909 |
-| Grafana | 30300 |
-| Locust | 30089 |
+Si estás usando **Docker Desktop**, los servicios NodePort son directamente accesibles en tu `localhost`. Si usas **Minikube**, puedes obtener la URL o port-forwardearlos.
 
-> Cada servicio vive en su propio namespace (ver tabla abajo). Ej.:
-> `minikube service realty-api-svc -n api --url`, `... realty-ui-svc -n streamlit`, `... grafana-svc -n grafana`.
+| Servicio | Puerto Localhost | Namespace | Service Name |
+|---|---|---|---|
+| Airflow Web UI | `http://localhost:30088` | `airflow` | `realty-airflow-webserver` |
+| FastAPI de Inferencia | `http://localhost:30800` | `api` | `realty-api-svc` |
+| Streamlit UI | `http://localhost:30801` | `streamlit` | `realty-ui-svc` |
+| MLflow Tracking | `http://localhost:30500` | `mlflow` | `mlflow-svc` |
+| MinIO Console | `http://localhost:30900` | `minio` | `minio-console-svc` |
+| Locust Load Test | `http://localhost:30089` | `locust` | `locust-svc` |
+| Prometheus | `http://localhost:30909` | `prometheus` | `prometheus-svc` |
+| Grafana (admin/admin2026) | `http://localhost:30300` | `grafana` | `grafana-svc` |
+
+---
 
 ---
 
@@ -178,33 +233,7 @@ configurar en GitHub los secrets `DOCKERHUB_USERNAME` y `DOCKERHUB_TOKEN` para e
 
 ---
 
-## Estado actual (~80%)
 
-**Funcionando y validado end-to-end:**
-- Pipeline completo en Airflow (DAG de 19 tareas, 2 bifurcaciones): ingesta por lotes → validación
-  (esquema, calidad, categorías nuevas, drift KS) → decisión de entrenamiento (RF4) → entrenamiento
-  + registro en MLflow (RF5) → comparación contra productivo + promoción condicionada (RF6).
-  Demostrados los 3 caminos: **entrenó+promovió**, **entrenó+rechazó**, **no-entrenó**.
-- MLflow (Postgres + MinIO), FastAPI con **recarga sin redespliegue** (RF7) y registro de inferencias (RF8),
-  Streamlit (inferencia + historial).
-- CI/CD: GitHub Actions → DockerHub (4 imágenes).
-- Kubernetes en minikube: **un namespace por servicio** (10 namespaces), DNS cross-namespace, probes y recursos.
-- Observabilidad: Prometheus, Grafana y Locust desplegados.
-
-**Pendiente:**
-- Argo CD (GitOps) — sincronización declarativa.
-- Evidencia de prueba de carga Locust → Grafana (RF10).
-- Documentación final y video de sustentación.
-
-| Fase | Estado |
-|---|---|
-| 0 — Contrato de la API de datos | ✅ |
-| 1 — DAG end-to-end (local) | ✅ |
-| 2 — API/UI contra MLflow | ✅ |
-| 3 — Despliegue en minikube (multi-namespace) | ✅ |
-| 4 — Argo CD + observabilidad + docs + video | 🔜 en curso |
-
----
 
 ## Decisiones de diseño
 
