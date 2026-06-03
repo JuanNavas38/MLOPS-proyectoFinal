@@ -277,4 +277,6 @@ Si estás usando **Docker Desktop**, los servicios NodePort son directamente acc
 
 ## Video de sustentación
 
-_(pendiente — se publicará en YouTube, máx. 10 min)_
+El video con la sustentación y demostración de este proyecto MLOps se encuentra disponible en YouTube a través del siguiente enlace:
+
+* **Enlace al Video:** [Sustentación Proyecto MLOps — Grupo 1 (YouTube)](https://www.youtube.com/watch?v=BWBcm6uu9Fk)
